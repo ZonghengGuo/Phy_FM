@@ -121,7 +121,7 @@ class BaseProcessor:
         if not (0 < freq < 1):
             return data
 
-        if len(data) <= 8: # 根据经验，过短信号陷波可能出问题
+        if len(data) <= 8:
             print(f"警告: 数据长度 {len(data)} 过短，无法进行陷波滤波。跳过。")
             return data
         b, a = iirnotch(freq, quality_factor)
@@ -233,15 +233,3 @@ class BaseProcessor:
                     print(f"  ERROR: in {h5_group_name} failed to save: {e_h5}")
                     if hasattr(self, 'overall_stats') and "failed_records" in self.overall_stats:
                         self.overall_stats["failed_records"].append(f"{h5_group_name} (HDF5 write error: {e_h5})")
-
-
-
-
-
-
-
-
-
-
-
-
