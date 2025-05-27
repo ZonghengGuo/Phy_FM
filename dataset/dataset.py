@@ -289,7 +289,7 @@ class AggregatedECGDataset(Dataset):
 if __name__ == '__main__':
     if __name__ == '__main__':
         hdf5_file_path_1 = Path(r"D:\database\ECG_12l\georgia\georgia.hdf5")
-        hdf5_file_path_2 = Path(r"D:\database\ECG_12l\cpsc_2018\cpsc.hdf5")  # 请替换为您的实际路径
+        hdf5_file_path_2 = Path(r"D:\database\ECG_12l\cpsc_2018\cpsc.hdf5")
 
         if not hdf5_file_path_1.exists():
             print(f"错误: 文件 {hdf5_file_path_1} 不存在！请检查路径。")
