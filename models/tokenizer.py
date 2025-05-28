@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from timm.models.layers import trunc_normal_
 from einops import rearrange
+import torch.nn.functional as F
 
 
 class ECGTokenizer(nn.Module):
@@ -15,7 +16,8 @@ class ECGTokenizer(nn.Module):
                  quantize_kmeans_init=True,
                  decay=0.99,
                  patch_size=200,
-                 decoder_out_dim=200):
+                 decoder_out_dim=200,
+                 smooth_l1_loss = False):
         super().__init__()
 
         self.encoder = NeuralTransformer(**encoder_config)
@@ -54,6 +56,7 @@ class ECGTokenizer(nn.Module):
             kmeans_init=quantize_kmeans_init,
             decay=decay,
         )
+        self.loss_fn = F.smooth_l1_loss if smooth_l1_loss else F.mse_loss
 
     def _init_weights(self, m):
         """Initializes weights for linear and LayerNorm layers."""
@@ -79,6 +82,20 @@ class ECGTokenizer(nn.Module):
         rec_loss = self.loss_fn(rec, target)
         return rec_loss
 
+    def get_codebook_indices(self, x, input_chans=None, **kwargs):
+        # for LaBraM pre-training
+        x = rearrange(x, 'B N (A T) -> B N A T', T=self.patch_size)
+        indices = self.get_tokens(x, input_chans, **kwargs)['token']
+        return indices
+
+    def get_tokens(self, data, input_chans=None, **kwargs):
+        quantize, embed_ind, loss = self.encode(data)
+        output = {}
+        output['token'] = embed_ind.view(data.shape[0], -1)
+        output['input_img'] = data
+        output['quantize'] = rearrange(quantize, 'b d a c -> b (a c) d')
+        return output
+
     def encode(self, x):
         ''''
             Encode ECG signals to quantized.
@@ -87,13 +104,13 @@ class ECGTokenizer(nn.Module):
         encoder_features = self.encoder(x, return_patch_tokens=True) # [4, 360, 200]
 
         # project features to codebook dimension
-        to_quantizer_features = self.encode_task_layer(encoder_features.type_as(self.encode_task_layer[-1].weight)) # [4, 360, 64]
+        to_quantizer_features = self.encode_task_layer(encoder_features.type_as(self.encode_task_layer[-1].weight)) # [4, 360, 200]
 
         # Transfer feature shape the same with quantizer
-        to_quantizer_features = rearrange(to_quantizer_features, 'b (h w) c -> b c h w', h=n_channels, w=n_patches_a) # [4, 64, 12, 30]
+        to_quantizer_features = rearrange(to_quantizer_features, 'b (h w) c -> b c h w', h=n_channels, w=n_patches_a) # [4, 200, 12, 30]
 
         # quantize features
-        quantize, loss, embed_ind = self.quantize(to_quantizer_features) # [4, 64, 12, 30], value, 1440
+        quantize, loss, embed_ind = self.quantize(to_quantizer_features) # [4, 200, 12, 30], value, 1440
         # Todo: loss how to calculate
 
         return quantize, embed_ind, loss
@@ -102,7 +119,7 @@ class ECGTokenizer(nn.Module):
         ''''
             Decode the quantized embedding to reconstruct amp and phase
         '''
-        # quantize: [4, 64, 12, 30]
+        # quantize: [4, 24, 12, 30]
         decoder_features = self.decoder(quantize, return_patch_tokens=True)
 
         # reconstruct amp and phase
@@ -126,6 +143,7 @@ class ECGTokenizer(nn.Module):
 
         # --- Encoding and Quantization ---
         quantize, embed_ind, emb_loss = self.encode(x)
+        print("quantize", quantize.shape)
 
         # --- Decoding and Reconstruction ---
         x_rec_amp, x_rec_phase = self.decode(quantize)
@@ -195,7 +213,7 @@ if __name__ == '__main__':
     NUM_CHANNELS = 12 # Standard 12-lead ECG
 
     CODEBOOK_SIZE = 8192
-    CODEBOOK_DIM = 64
+    CODEBOOK_DIM = 200
 
     # Get default configs and adapt decoder
     encoder_config = get_model_default_params(ECG_SIZE, PATCH_SIZE, NUM_CHANNELS)
@@ -211,6 +229,7 @@ if __name__ == '__main__':
     decoder_config['in_chans'] = CODEBOOK_DIM
     # Decoder can be smaller (e.g., fewer layers)
     decoder_config['depth'] = 3
+    decoder_config['embed_dim'] = 24
     # Decoder needs to use PatchEmbed instead of TemporalConv
     decoder_config['patch_embed'] = PatchEmbed(
         EEG_size=decoder_config['EEG_size'],

@@ -5,11 +5,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="7b7e7870-ca96-4339-b991-2a8d482d1bb2" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/models/tokenizer.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/models/transformer.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/train/tokenizer_trainer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/dataset/dataset.py" beforeDir="false" afterPath="$PROJECT_DIR$/dataset/dataset.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/models/tokenizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/tokenizer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/models/transformer.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/transformer.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -85,7 +83,8 @@
       <workItem from="1747920739842" duration="6849000" />
       <workItem from="1748250647282" duration="1731000" />
       <workItem from="1748262729027" duration="7774000" />
-      <workItem from="1748347899649" duration="8889000" />
+      <workItem from="1748347899649" duration="8969000" />
+      <workItem from="1748418619487" duration="8364000" />
     </task>
     <servers />
   </component>

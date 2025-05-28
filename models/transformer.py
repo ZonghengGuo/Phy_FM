@@ -221,8 +221,34 @@ class PatchEmbed(nn.Module):
     def forward(self, x, **kwargs):
         B, C, H, W = x.shape # [4, 12, 30, 100]
         x = self.proj(x)
-        print(x.shape)
         x = x.flatten(2).transpose(1, 2)
+        return x
+
+class TemporalConv(nn.Module):
+    """ EEG to Patch Embedding
+    """
+    def __init__(self, in_chans=12, out_chans=360):
+        '''
+        in_chans: in_chans of nn.Conv2d()
+        out_chans: out_chans of nn.Conv2d(), determing the output dimension
+        '''
+        super().__init__()
+        self.conv1 = nn.Conv1d(in_chans, out_chans, kernel_size=15, stride=15, padding=7)
+        self.gelu1 = nn.GELU()
+        self.norm1 = nn.GroupNorm(6, out_chans)
+        self.conv2 = nn.Conv1d(out_chans, out_chans, kernel_size=3, stride=1, padding=1)
+        self.gelu2 = nn.GELU()
+        self.norm2 = nn.GroupNorm(6, out_chans)
+        self.conv3 = nn.Conv1d(out_chans, out_chans, kernel_size=3, stride=1, padding=1)
+        self.norm3 = nn.GroupNorm(6, out_chans)
+        self.gelu3 = nn.GELU()
+
+    def forward(self, x, **kwargs):
+        x = rearrange(x, 'B N A T -> B N (A T)')
+        B, N, AT = x.shape # [4, 12, 3000]
+        x = self.gelu1(self.norm1(self.conv1(x))) # [4, 90, 200]
+        x = self.gelu2(self.norm2(self.conv2(x))) # [4, 180, 200]
+        x = self.gelu3(self.norm3(self.conv3(x))) # [4, 360, 200]
         return x
 
 
@@ -236,12 +262,13 @@ class NeuralTransformer(nn.Module):
                  use_mean_pooling=True, init_scale=0.001, max_time_patches=360,**kwargs):
         super().__init__()
         self.num_classes = num_classes
+        self.in_chans = in_chans
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
 
         # To identify whether it is neural tokenizer or neural decoder.
         # For the neural decoder, use linear projection (PatchEmbed) to project codebook dimension to hidden dimension.
         # Otherwise, use TemporalConv to extract temporal features from EEG signals.
-        self.patch_embed = PatchEmbed(EEG_size=EEG_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
+        self.patch_embed = TemporalConv(self.in_chans)
         self.time_window = EEG_size // patch_size
         self.patch_size = patch_size
 
@@ -317,12 +344,11 @@ class NeuralTransformer(nn.Module):
 
     def forward_features(self, x, input_chans=None, return_patch_tokens=False, return_all_tokens=False, **kwargs):
         batch_size, n, a, t = x.shape # (4, 12, 30, 100), (batchsize, channels, feature//encoder_features, patch_size)
-        x = self.patch_embed(x)
-        print(x.shape)
+        x = self.patch_embed(x) # encoder: [4, 360, 200]; decoder: [4, 360, 24]
 
-        cls_tokens = self.cls_token.expand(batch_size, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
+        cls_tokens = self.cls_token.expand(batch_size, -1, -1)
 
-        x = torch.cat((cls_tokens, x), dim=1) # [4, 31, 200]
+        x = torch.cat((cls_tokens, x), dim=1)
 
         if self.pos_embed is not None:
             pos_embed = self.pos_embed[:, :x.shape[1], :]
