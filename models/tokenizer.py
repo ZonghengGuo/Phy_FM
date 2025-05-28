@@ -82,13 +82,13 @@ class ECGTokenizer(nn.Module):
         rec_loss = self.loss_fn(rec, target)
         return rec_loss
 
-    def get_codebook_indices(self, x, input_chans=None, **kwargs):
+    def get_codebook_indices(self, x, **kwargs):
         # for LaBraM pre-training
         x = rearrange(x, 'B N (A T) -> B N A T', T=self.patch_size)
-        indices = self.get_tokens(x, input_chans, **kwargs)['token']
+        indices = self.get_tokens(x, **kwargs)['token']
         return indices
 
-    def get_tokens(self, data, input_chans=None, **kwargs):
+    def get_tokens(self, data, **kwargs):
         quantize, embed_ind, loss = self.encode(data)
         output = {}
         output['token'] = embed_ind.view(data.shape[0], -1)
@@ -119,8 +119,8 @@ class ECGTokenizer(nn.Module):
         ''''
             Decode the quantized embedding to reconstruct amp and phase
         '''
-        # quantize: [4, 24, 12, 30]
-        decoder_features = self.decoder(quantize, return_patch_tokens=True)
+        # quantize: [4, 200, 12, 30]
+        decoder_features = self.decoder(quantize, return_patch_tokens=True) # [4, 360, 24]
 
         # reconstruct amp and phase
         rec_amp = self.decode_task_layer_amp(decoder_features)
@@ -132,12 +132,12 @@ class ECGTokenizer(nn.Module):
         # Reshape input to [B, N, A, T] where T is the patch size
         x = rearrange(x, 'B N (A T) -> B N A T', T=self.patch_size)
 
-        # --- Fourier Spectrum Calculation --- [cite: 101]
+        # --- Fourier Spectrum Calculation ---
         x_fft = torch.fft.fft(x, dim=-1)
         amplitude = torch.abs(x_fft)
         phase = torch.angle(x_fft)
 
-        # Normalize amplitude and phase [cite: 104]
+        # Normalize amplitude and phase
         amplitude = self.std_norm(amplitude)
         phase = self.std_norm(phase)
 
