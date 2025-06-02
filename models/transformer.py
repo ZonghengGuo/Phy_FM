@@ -227,33 +227,34 @@ class PatchEmbed(nn.Module):
 class TemporalConv(nn.Module):
     """ EEG to Patch Embedding
     """
-    def __init__(self, in_chans=12, out_chans=360):
+    def __init__(self, in_chans, out_chans):
         '''
         in_chans: in_chans of nn.Conv2d()
         out_chans: out_chans of nn.Conv2d(), determing the output dimension
         '''
         super().__init__()
+        self.out_chans = out_chans
         self.conv1 = nn.Conv1d(in_chans, out_chans, kernel_size=15, stride=15, padding=7)
         self.gelu1 = nn.GELU()
-        self.norm1 = nn.GroupNorm(6, out_chans)
+        self.norm1 = nn.GroupNorm(1, out_chans)
         self.conv2 = nn.Conv1d(out_chans, out_chans, kernel_size=3, stride=1, padding=1)
         self.gelu2 = nn.GELU()
-        self.norm2 = nn.GroupNorm(6, out_chans)
+        self.norm2 = nn.GroupNorm(1, out_chans)
         self.conv3 = nn.Conv1d(out_chans, out_chans, kernel_size=3, stride=1, padding=1)
-        self.norm3 = nn.GroupNorm(6, out_chans)
+        self.norm3 = nn.GroupNorm(1, out_chans)
         self.gelu3 = nn.GELU()
 
     def forward(self, x, **kwargs):
         x = rearrange(x, 'B N A T -> B N (A T)')
         B, N, AT = x.shape # [4, 12, 3000]
-        x = self.gelu1(self.norm1(self.conv1(x))) # [4, 90, 200]
-        x = self.gelu2(self.norm2(self.conv2(x))) # [4, 180, 200]
-        x = self.gelu3(self.norm3(self.conv3(x))) # [4, 360, 200]
+        x = self.gelu1(self.norm1(self.conv1(x))) # [4, 90, 100]
+        x = self.gelu2(self.norm2(self.conv2(x))) # [4, 180, 100]
+        x = self.gelu3(self.norm3(self.conv3(x))) # [4, 360, 100]
         return x
 
 
 class NeuralTransformer(nn.Module):
-    def __init__(self, EEG_size=1600, patch_size=200, in_chans=1, out_chans=8, num_classes=1000, embed_dim=200,
+    def __init__(self, sig_size, patch_size, in_chans, out_chans=8, num_classes=1000, embed_dim=100,
                  depth=12,
                  num_heads=10, mlp_ratio=4., qkv_bias=False, qk_norm=None, qk_scale=None, drop_rate=0.,
                  attn_drop_rate=0.,
@@ -263,15 +264,16 @@ class NeuralTransformer(nn.Module):
         super().__init__()
         self.num_classes = num_classes
         self.in_chans = in_chans
+        self.out_chans = self.in_chans * (sig_size//patch_size)
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
 
         # To identify whether it is neural tokenizer or neural decoder.
         # For the neural decoder, use linear projection (PatchEmbed) to project codebook dimension to hidden dimension.
         # Otherwise, use TemporalConv to extract temporal features from EEG signals.
-        self.patch_embed = TemporalConv(self.in_chans)
-        self.time_window = EEG_size // patch_size
+        self.patch_embed = TemporalConv(self.in_chans, self.out_chans)
+        self.time_window = sig_size // patch_size
         self.patch_size = patch_size
-
+        self.max_time_patches = self.out_chans
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         # self.mask_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         if use_abs_pos_emb:
@@ -343,8 +345,9 @@ class NeuralTransformer(nn.Module):
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
     def forward_features(self, x, input_chans=None, return_patch_tokens=False, return_all_tokens=False, **kwargs):
-        batch_size, n, a, t = x.shape # (4, 12, 30, 100), (batchsize, channels, feature//encoder_features, patch_size)
-        x = self.patch_embed(x) # encoder: [4, 360, 200]; decoder: [4, 360, 24]
+        batch_size, n, a, t = x.shape # (4, channels, 5, 300), (batchsize, channels, feature//encoder_features, patch_size)
+
+        x = self.patch_embed(x) # encoder: [4, channels*5, 100]; decoder: [4, 360, 24]
 
         cls_tokens = self.cls_token.expand(batch_size, -1, -1)
 
@@ -356,7 +359,7 @@ class NeuralTransformer(nn.Module):
 
         if self.time_embed is not None:
             time_embed = self.time_embed[:, :x.shape[1], :]
-            x[:, 1:, :] += time_embed
+            x += time_embed
 
         x = self.pos_drop(x)
 
@@ -655,5 +658,5 @@ class NormEMAVectorQuantizer(nn.Module):
 
         # reshape back to match original input shape
         # z_q, 'b h w c -> b c h w'
-        z_q = rearrange(z_q, 'b h w c -> b c h w')
+        # z_q = rearrange(z_q, 'b h w c -> b c h w')
         return z_q, loss, encoding_indices

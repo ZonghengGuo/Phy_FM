@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import numpy as np
+import pandas as pd
 import wfdb
 import argparse
 from scipy.signal import butter, filtfilt, iirnotch, resample
@@ -157,6 +158,14 @@ class BaseProcessor:
         normalized_data = 2 * (data - min_val) / (max_val - min_val) - 1
         return normalized_data
 
+    def interpolate_nan_multichannel(self, sig):
+        # sig: shape (channels, time)
+        interpolated = []
+        for channel in sig:
+            interpolated_channel = pd.Series(channel).interpolate(method='linear', limit_direction='both').to_numpy()
+            interpolated.append(interpolated_channel)
+        return np.array(interpolated)
+
     def process_single_record(self, sig, fs, time):
         num_samples_original, num_original_channels = sig.shape
         processed_channels_data = []
@@ -176,8 +185,14 @@ class BaseProcessor:
             processed_channels_data.append(normalized_channel_data)
 
         min_len = min(len(ch) for ch in processed_channels_data)
-        # 转置为 (num_channels, num_samples)
         processed_signal_array = np.array([ch[:min_len] for ch in processed_channels_data])
+
+        processed_signal_array = self.interpolate_nan_multichannel(processed_signal_array)
+
+        if np.any(np.isnan(processed_signal_array)) or np.any(np.isinf(processed_signal_array)):
+            print(
+                f"Info: NaNs or Infs still present after interpolation or were Infs. Applying np.nan_to_num to zero them out.")
+            processed_signal_array = np.nan_to_num(processed_signal_array, nan=0.0, posinf=0.0, neginf=0.0)
 
         metadata = {"original_sfreq": fs,
                     "duration_seconds_original": time,

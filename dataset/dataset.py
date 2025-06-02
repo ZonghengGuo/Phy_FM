@@ -287,107 +287,108 @@ class AggregatedECGDataset(Dataset):
 
 # --- 验证代码 ---
 if __name__ == '__main__':
-    if __name__ == '__main__':
-        hdf5_file_path_1 = Path(r"D:\database\ECG_12l\georgia\georgia.hdf5")
-        hdf5_file_path_2 = Path(r"D:\database\ECG_12l\cpsc_2018\cpsc.hdf5")
+    window_size = 1500 # 5sec
+    stride_size = 750 # 2.5sec
+    hdf5_file_path_1 = Path(r"D:\database\ECG_12l\georgia\georgia.hdf5")
+    hdf5_file_path_2 = Path(r"D:\database\ECG_12l\cpsc_2018\cpsc.hdf5")
 
-        if not hdf5_file_path_1.exists():
-            print(f"错误: 文件 {hdf5_file_path_1} 不存在！请检查路径。")
-            exit()
-        if not hdf5_file_path_2.exists():
-            print(f"错误: 文件 {hdf5_file_path_2} 不存在！请检查路径。")
-            exit()
+    if not hdf5_file_path_1.exists():
+        print(f"错误: 文件 {hdf5_file_path_1} 不存在！请检查路径。")
+        exit()
+    if not hdf5_file_path_2.exists():
+        print(f"错误: 文件 {hdf5_file_path_2} 不存在！请检查路径。")
+        exit()
 
-        print(f"将使用以下HDF5文件进行测试: \n1. {hdf5_file_path_1}\n2. {hdf5_file_path_2}")
+    print(f"将使用以下HDF5文件进行测试: \n1. {hdf5_file_path_1}\n2. {hdf5_file_path_2}")
 
-        # --- 第一个 AggregatedECGDataset 实例 (例如，只包含 Georgia 数据集) ---
-        print(f"\n--- 测试 AggregatedECGDataset 实例 1 (仅 Georgia) ---")
-        try:
-            # 假设采样率为300Hz, 窗口大小为600 (2秒), 步长为300 (1秒)
-            # dataset_key 和 channel_attr_key 需要根据您HDF5文件的实际情况调整
-            aggregated_dataset_1 = AggregatedECGDataset(
-                file_paths=[hdf5_file_path_1],  # 只传入一个文件
-                window_size=600,
-                stride_size=300,
-                dataset_key='ecg_data',  # 假设HDF5中数据集名为 'ecg_data'
+    # --- 第一个 AggregatedECGDataset 实例 (例如，只包含 Georgia 数据集) ---
+    print(f"\n--- 测试 AggregatedECGDataset 实例 1 (仅 Georgia) ---")
+    try:
+        # 假设采样率为300Hz, 窗口大小为600 (2秒), 步长为300 (1秒)
+        # dataset_key 和 channel_attr_key 需要根据您HDF5文件的实际情况调整
+        aggregated_dataset_1 = AggregatedECGDataset(
+            file_paths=[hdf5_file_path_1],
+            window_size=window_size,
+            stride_size=stride_size,
+            dataset_key='ecg_data',  # 假设HDF5中数据集名为 'ecg_data'
+        )
+
+        print(f"实例1 - 数据集总样本数: {len(aggregated_dataset_1)}")
+        if len(aggregated_dataset_1) > 0:
+            print(f"实例1 - 单个样本特征大小: {aggregated_dataset_1.feature_size}")
+
+            print("\n实例1 - 获取前2个样本:")
+            for i in range(min(2, len(aggregated_dataset_1))):
+                sample = aggregated_dataset_1[i]
+                print(f"  实例1 - 样本 {i} 形状: {sample.shape}")
+        else:
+            print("实例1 - 数据集为空。")
+        aggregated_dataset_1.free()
+
+    except Exception as e:
+        print(f"测试实例1时发生错误: {e}")
+        import traceback
+
+        traceback.print_exc()
+
+    # --- 第二个 AggregatedECGDataset 实例 (包含 Georgia 和 CPSC 数据集) ---
+    print(f"\n--- 测试 AggregatedECGDataset 实例 2 (Georgia + CPSC) ---")
+    try:
+        aggregated_dataset_2 = AggregatedECGDataset(
+            file_paths=[hdf5_file_path_1, hdf5_file_path_2],
+            window_size=window_size,
+            stride_size=stride_size,
+            dataset_key='ecg_data',
+        )
+
+        print(f"实例2 - 数据集总样本数: {len(aggregated_dataset_2)}")
+
+        if len(aggregated_dataset_2) > 0:
+            print(f"实例2 - 单个样本特征大小: {aggregated_dataset_2.feature_size}")
+
+            print("\n实例2 - 获取前几个样本:")
+            num_samples_to_show = 5
+            # 尝试获取一些样本，包括可能跨越文件边界的样本
+            # 首先计算第一个文件在聚合数据集中的大致样本数，以测试边界
+            temp_ds1_for_len_check = AdaptedECGDataset(
+                file_path=hdf5_file_path_1, window_size=window_size, stride_size=stride_size,
+                dataset_key='ecg_data'
             )
+            len_ds1 = len(temp_ds1_for_len_check)
+            temp_ds1_for_len_check.free()
+            print(f"(信息: 文件1 '{hdf5_file_path_1.name}' 包含约 {len_ds1} 个窗口)")
 
-            print(f"实例1 - 数据集总样本数: {len(aggregated_dataset_1)}")
-            if len(aggregated_dataset_1) > 0:
-                print(f"实例1 - 单个样本特征大小: {aggregated_dataset_1.feature_size}")
+            indices_to_check = [0, 1]
+            if len_ds1 > 1:
+                indices_to_check.append(len_ds1 - 1)  # 第一个文件的最后一个窗口
+            if len(aggregated_dataset_2) > len_ds1:
+                indices_to_check.append(len_ds1)  # 第二个文件的第一个窗口
+            if len(aggregated_dataset_2) > len_ds1 + 1:
+                indices_to_check.append(len_ds1 + 1)  # 第二个文件的第二个窗口
+            if len(aggregated_dataset_2) - 1 not in indices_to_check and len(
+                    aggregated_dataset_2) > 0:  # 确保最后一个也被检查
+                indices_to_check.append(len(aggregated_dataset_2) - 1)  # 整个聚合数据集的最后一个窗口
 
-                print("\n实例1 - 获取前2个样本:")
-                for i in range(min(2, len(aggregated_dataset_1))):
-                    sample = aggregated_dataset_1[i]
-                    print(f"  实例1 - 样本 {i} 形状: {sample.shape}")
-            else:
-                print("实例1 - 数据集为空。")
-            aggregated_dataset_1.free()
+            indices_to_check = sorted(list(set(idx for idx in indices_to_check if idx < len(aggregated_dataset_2))))
 
-        except Exception as e:
-            print(f"测试实例1时发生错误: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-        # --- 第二个 AggregatedECGDataset 实例 (包含 Georgia 和 CPSC 数据集) ---
-        print(f"\n--- 测试 AggregatedECGDataset 实例 2 (Georgia + CPSC) ---")
-        try:
-            aggregated_dataset_2 = AggregatedECGDataset(
-                file_paths=[hdf5_file_path_1, hdf5_file_path_2],  # 传入两个文件
-                window_size=600,
-                stride_size=300,
-                dataset_key='ecg_data',
-            )
-
-            print(f"实例2 - 数据集总样本数: {len(aggregated_dataset_2)}")
-
-            if len(aggregated_dataset_2) > 0:
-                print(f"实例2 - 单个样本特征大小: {aggregated_dataset_2.feature_size}")
-
-                print("\n实例2 - 获取前几个样本:")
-                num_samples_to_show = 5
-                # 尝试获取一些样本，包括可能跨越文件边界的样本
-                # 首先计算第一个文件在聚合数据集中的大致样本数，以测试边界
-                temp_ds1_for_len_check = AdaptedECGDataset(
-                    file_path=hdf5_file_path_1, window_size=600, stride_size=300,
-                    dataset_key='ecg_data'
-                )
-                len_ds1 = len(temp_ds1_for_len_check)
-                temp_ds1_for_len_check.free()
-                print(f"(信息: 文件1 '{hdf5_file_path_1.name}' 包含约 {len_ds1} 个窗口)")
-
-                indices_to_check = [0, 1]
-                if len_ds1 > 1:
-                    indices_to_check.append(len_ds1 - 1)  # 第一个文件的最后一个窗口
-                if len(aggregated_dataset_2) > len_ds1:
-                    indices_to_check.append(len_ds1)  # 第二个文件的第一个窗口
-                if len(aggregated_dataset_2) > len_ds1 + 1:
-                    indices_to_check.append(len_ds1 + 1)  # 第二个文件的第二个窗口
-                if len(aggregated_dataset_2) - 1 not in indices_to_check and len(
-                        aggregated_dataset_2) > 0:  # 确保最后一个也被检查
-                    indices_to_check.append(len(aggregated_dataset_2) - 1)  # 整个聚合数据集的最后一个窗口
-
-                indices_to_check = sorted(list(set(idx for idx in indices_to_check if idx < len(aggregated_dataset_2))))
-
-                for i in indices_to_check:
-                    try:
-                        sample = aggregated_dataset_2[i]
-                        print(f"  实例2 - 样本 {i} 形状: {sample.shape}")
-                    except IndexError:
-                        print(f"  实例2 - 样本 {i} 索引超出范围 (数据集长度: {len(aggregated_dataset_2)})")
-                    except Exception as e_item:
-                        print(f"  实例2 - 获取样本 {i} 时出错: {e_item}")
+            for i in indices_to_check:
+                try:
+                    sample = aggregated_dataset_2[i]
+                    print(f"  实例2 - 样本 {i} 形状: {sample.shape}")
+                except IndexError:
+                    print(f"  实例2 - 样本 {i} 索引超出范围 (数据集长度: {len(aggregated_dataset_2)})")
+                except Exception as e_item:
+                    print(f"  实例2 - 获取样本 {i} 时出错: {e_item}")
 
 
-            else:
-                print("实例2 - 数据集为空。")
-            aggregated_dataset_2.free()
+        else:
+            print("实例2 - 数据集为空。")
+        aggregated_dataset_2.free()
 
-        except Exception as e:
-            print(f"测试实例2时发生错误: {e}")
-            import traceback
+    except Exception as e:
+        print(f"测试实例2时发生错误: {e}")
+        import traceback
 
-            traceback.print_exc()
+        traceback.print_exc()
 
-        print("\n--- HDF5读取测试结束 ---")
+    print("\n--- HDF5读取测试结束 ---")

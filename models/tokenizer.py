@@ -1,4 +1,4 @@
-from transformer import NeuralTransformer, NormEMAVectorQuantizer, PatchEmbed
+from models.transformer import NeuralTransformer, NormEMAVectorQuantizer, PatchEmbed
 from functools import partial
 import torch
 import torch.nn as nn
@@ -15,8 +15,8 @@ class ECGTokenizer(nn.Module):
                  n_embed=8192,
                  quantize_kmeans_init=True,
                  decay=0.99,
-                 patch_size=200,
-                 decoder_out_dim=200,
+                 patch_size=300,
+                 decoder_out_dim=100,
                  smooth_l1_loss = False):
         super().__init__()
 
@@ -101,7 +101,7 @@ class ECGTokenizer(nn.Module):
             Encode ECG signals to quantized.
         '''
         batch_size, n_channels, n_patches_a, n_points_t = x.shape
-        encoder_features = self.encoder(x, return_patch_tokens=True) # [4, 360, 200]
+        encoder_features = self.encoder(x, return_patch_tokens=True) # [4, 360, 100]
 
         # project features to codebook dimension
         to_quantizer_features = self.encode_task_layer(encoder_features.type_as(self.encode_task_layer[-1].weight)) # [4, 360, 200]
@@ -109,8 +109,9 @@ class ECGTokenizer(nn.Module):
         # Transfer feature shape the same with quantizer
         to_quantizer_features = rearrange(to_quantizer_features, 'b (h w) c -> b c h w', h=n_channels, w=n_patches_a) # [4, 200, 12, 30]
 
+
         # quantize features
-        quantize, loss, embed_ind = self.quantize(to_quantizer_features) # [4, 200, 12, 30], value, 1440
+        quantize, loss, embed_ind = self.quantize(to_quantizer_features) # [4, 200, in_chan, 5], value, 1440
         # Todo: loss how to calculate
 
         return quantize, embed_ind, loss
@@ -119,7 +120,7 @@ class ECGTokenizer(nn.Module):
         ''''
             Decode the quantized embedding to reconstruct amp and phase
         '''
-        # quantize: [4, 200, 12, 30]
+        # quantize: [4, 100, 12, 30]
         decoder_features = self.decoder(quantize, return_patch_tokens=True) # [4, 360, 24]
 
         # reconstruct amp and phase
@@ -143,7 +144,6 @@ class ECGTokenizer(nn.Module):
 
         # --- Encoding and Quantization ---
         quantize, embed_ind, emb_loss = self.encode(x)
-        print("quantize", quantize.shape)
 
         # --- Decoding and Reconstruction ---
         x_rec_amp, x_rec_phase = self.decode(quantize)
@@ -181,11 +181,11 @@ def get_model_default_params(ecg_size=3000, patch_size=100, in_chans=12):
         dict: A dictionary of parameters.
     """
     return dict(
-        EEG_size=ecg_size, # Use EEG_size, but understand it's ECG_size here
+        sig_size=ecg_size,
         patch_size=patch_size,
         in_chans=in_chans,
         num_classes=0, # No classification head needed for tokenizer
-        embed_dim=200, # Base model size
+        embed_dim=100 * (12 // in_chans), # Base model size
         depth=12,      # Base model depth
         num_heads=10,  # Base model heads
         mlp_ratio=4.,
@@ -207,32 +207,32 @@ def get_model_default_params(ecg_size=3000, patch_size=100, in_chans=12):
 if __name__ == '__main__':
     # --- Configuration ---
     ECG_SAMPLE_RATE = 300 # Hz
-    ECG_DURATION = 10     # seconds
+    ECG_DURATION = 5     # seconds
     ECG_SIZE = ECG_SAMPLE_RATE * ECG_DURATION # 3000 points
-    PATCH_SIZE = 100 # ~0.33 seconds per patch
+    PATCH_SIZE = 300 # ~1 second per patch
     NUM_CHANNELS = 12 # Standard 12-lead ECG
 
     CODEBOOK_SIZE = 8192
-    CODEBOOK_DIM = 200
+    CODEBOOK_DIM = 100
+
 
     # Get default configs and adapt decoder
     encoder_config = get_model_default_params(ECG_SIZE, PATCH_SIZE, NUM_CHANNELS)
     decoder_config = get_model_default_params(ECG_SIZE, PATCH_SIZE, NUM_CHANNELS)
 
     # --- Important Decoder Adaptations ---
-    decoder_config['patch_size_conv']=100
     # Decoder input size is the number of patches, not raw signal length
-    decoder_config['EEG_size'] = encoder_config['EEG_size'] // encoder_config['patch_size']
+    decoder_config['sig_size'] = encoder_config['sig_size'] // encoder_config['patch_size']
     # Decoder patch size is 1 because it processes one token embedding at a time
     decoder_config['patch_size'] = 1
     # Decoder input channels must match the codebook dimension
-    decoder_config['in_chans'] = CODEBOOK_DIM
+    decoder_config['in_chans'] = NUM_CHANNELS
     # Decoder can be smaller (e.g., fewer layers)
     decoder_config['depth'] = 3
-    decoder_config['embed_dim'] = 24
+    decoder_config['embed_dim'] = 33 * (12//NUM_CHANNELS) + 2
     # Decoder needs to use PatchEmbed instead of TemporalConv
     decoder_config['patch_embed'] = PatchEmbed(
-        EEG_size=decoder_config['EEG_size'],
+        EEG_size=decoder_config['sig_size'],
         patch_size=decoder_config['patch_size'],
         in_chans=decoder_config['in_chans'],
         embed_dim=decoder_config['embed_dim']
@@ -250,7 +250,8 @@ if __name__ == '__main__':
     )
 
     # --- Dummy Data ---
-    # Batch size = 4, 12 channels, 3000 points
+    # Batch size = 4, 12 channels, 1500 points
+    # Batch size = 4, 6 channels, 3000 points
     dummy_ecg_data = torch.randn(4, NUM_CHANNELS, ECG_SIZE)
 
     print("Input ECG data shape:", dummy_ecg_data.shape)
@@ -264,7 +265,7 @@ if __name__ == '__main__':
     # --- Get Codebook Indices ---
     print("\n--- Getting Codebook Indices ---")
     indices = model.get_codebook_indices(dummy_ecg_data)
-    print("Codebook Indices Shape:", indices.shape) # Should be (B, N*A)
+    print("Codebook Indices Shape:", indices.shape)
 
     print("\n--- Model Architecture ---")
     print(model)
