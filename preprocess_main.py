@@ -19,12 +19,6 @@ def get_args():
 if __name__ == '__main__':
     args = get_args()
 
-    if args.dataset_name == "cpsc":
-        print("Start processing CPSC dataset")
-        cpsc = processors.BaseProcessor(args)
-        cpsc.process_record()
-
-    elif args.dataset_name == "georgia":
-        print("Start processing Georgia dataset")
-        georgia = processors.BaseProcessor(args)
-        georgia.process_record()
+    print("Start processing dataset")
+    database = processors.BaseProcessor(args)
+    database.process_record()
