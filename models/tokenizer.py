@@ -168,20 +168,9 @@ class ECGTokenizer(nn.Module):
 
 
 # --- Helper to get default parameters (adapted from LaBraM) ---
-def get_model_default_params(ecg_size=3000, patch_size=100, in_chans=12):
-    """
-    Provides default parameters for NeuralTransformer, adaptable for ECG.
-
-    Args:
-        ecg_size (int): Total number of sample points in an ECG window.
-        patch_size (int): Size of each patch (w).
-        in_chans (int): Number of ECG channels (C).
-
-    Returns:
-        dict: A dictionary of parameters.
-    """
+def get_model_default_params(sig_size=3000, patch_size=100, in_chans=12):
     return dict(
-        sig_size=ecg_size,
+        sig_size=sig_size,
         patch_size=patch_size,
         in_chans=in_chans,
         num_classes=0, # No classification head needed for tokenizer
