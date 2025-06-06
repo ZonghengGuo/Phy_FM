@@ -8,9 +8,9 @@ from scipy.signal import butter, filtfilt, iirnotch, resample
 import h5py
 
 class H5Dataset:
-    def __init__(self, path, name: str): # path 可以是 str 或 Path
+    def __init__(self, path, name: str):
         self.__name = name
-        _path_obj = Path(path) # 在这里转换为 Path 对象
+        _path_obj = Path(path)
         self.__file_path = _path_obj / f'{name}.hdf5'
         _path_obj.mkdir(parents=True, exist_ok=True)
         self.__f = None
@@ -51,7 +51,7 @@ class H5Dataset:
             attr_value = np.array(attr_value, dtype=h5py.string_dtype(encoding='utf-8'))
         src.attrs[f'{attr_name}'] = attr_value
 
-    def save(self): # 在LaBraM的实现中，这个方法是关闭文件
+    def save(self):
         if self.__f is not None:
             self.__f.close()
             self.__f = None
@@ -106,7 +106,7 @@ class BaseProcessor:
             high = self.highcut / nyq
             b, a = butter(order, high, btype='low', analog=False)
         else:
-            return data # 不滤波
+            return data
 
         if len(data) <= order * 3:
             print(f"警告: 数据长度 {len(data)} 过短，无法进行阶数为 {order} 的滤波。跳过滤波。")
@@ -145,7 +145,6 @@ class BaseProcessor:
         return resampled_data
 
     def normalize_to_minus_one_to_one(self, data):
-        """将单通道信号标准化到 [-1, 1] 区间。"""
         if data.size == 0 or np.all(data == data[0]):
             return data
 
@@ -226,12 +225,10 @@ class BaseProcessor:
                 h5_group_name = f"{subject_name}_{wave_name}"
                 try:
                     grp = self.h5_writer.add_group(h5_group_name)
-                    # 假设 processed_signal_to_save 是 (channels, samples) 格式
-                    dset = self.h5_writer.add_dataset(grp, 'ecg_data', processed_signal_to_save)
+                    dset = self.h5_writer.add_dataset(grp, 'data', processed_signal_to_save)
 
-                    # 将 meta_data 中剩余的项作为属性存储
                     for key, value in meta_data.items():
-                        if value is not None:  # 确保值不是 None
+                        if value is not None:
                             try:
                                 self.h5_writer.add_attributes(dset, key, value)
                             except Exception as e_attr:
@@ -240,7 +237,7 @@ class BaseProcessor:
                     print(f"Successfully process waveforms and going to save: {h5_group_name}")
                     if hasattr(self, 'overall_stats'):
                         self.overall_stats["successfully_processed_records"] += 1
-                        if "duration_seconds_original" in meta_data:  # 确保键存在
+                        if "duration_seconds_original" in meta_data:
                             self.overall_stats["total_original_duration_seconds"] += meta_data[
                                 "duration_seconds_original"]
 

@@ -17,7 +17,7 @@ class AdaptedECGDataset(Dataset):
                  stride_size: int = 1,
                  start_percentage: float = 0.0,
                  end_percentage: float = 1.0,
-                 dataset_key: str = 'ecg_data',  # Key for the ECG data in HDF5
+                 dataset_key: str = 'data',  # Key for the ECG data in HDF5
                  ):
         '''
         Extracts datasets from file_path.
@@ -27,7 +27,7 @@ class AdaptedECGDataset(Dataset):
         :param stride_size: Interval between two adjacent samples.
         :param start_percentage: Percentage index of the first sample in the data file (inclusive).
         :param end_percentage: Percentage index of the end of the dataset sample in the data file (exclusive).
-        :param dataset_key: The key/name of the dataset within HDF5 groups (e.g., 'ecg_data').
+        :param dataset_key: The key/name of the dataset within HDF5 groups (e.g., 'data').
         '''
         self.__file_path = Path(file_path)  # Ensure it's a Path object
         self.__window_size = window_size
@@ -191,12 +191,12 @@ class AggregatedECGDataset(Dataset):
     """
 
     def __init__(self,
-                 file_paths: List[Union[str, Path]],  # list contains some HDF5 paths
+                 file_paths: List[Path],  # list contains some HDF5 paths
                  window_size: int = 300,
                  stride_size: int = 1,
                  start_percentage: float = 0.0,
                  end_percentage: float = 1.0,
-                 dataset_key: str = 'ecg_data',
+                 dataset_key: str = 'data',
                  ):
         '''
         :param file_paths: List of paths to HDF5 data files.
@@ -310,7 +310,7 @@ if __name__ == '__main__':
             file_paths=[hdf5_file_path_1],
             window_size=window_size,
             stride_size=stride_size,
-            dataset_key='ecg_data',  # 假设HDF5中数据集名为 'ecg_data'
+            dataset_key='data',
         )
 
         print(f"实例1 - 数据集总样本数: {len(aggregated_dataset_1)}")
@@ -338,7 +338,7 @@ if __name__ == '__main__':
             file_paths=[hdf5_file_path_1, hdf5_file_path_2],
             window_size=window_size,
             stride_size=stride_size,
-            dataset_key='ecg_data',
+            dataset_key='data',
         )
 
         print(f"实例2 - 数据集总样本数: {len(aggregated_dataset_2)}")
@@ -352,7 +352,7 @@ if __name__ == '__main__':
             # 首先计算第一个文件在聚合数据集中的大致样本数，以测试边界
             temp_ds1_for_len_check = AdaptedECGDataset(
                 file_path=hdf5_file_path_1, window_size=window_size, stride_size=stride_size,
-                dataset_key='ecg_data'
+                dataset_key='data'
             )
             len_ds1 = len(temp_ds1_for_len_check)
             temp_ds1_for_len_check.free()

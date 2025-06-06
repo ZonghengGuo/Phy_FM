@@ -20,7 +20,6 @@ def get_args():
 
     # -------------------------------- Tokenizer Training Group-----------------------------
     preprocess_args = parser.add_argument_group('Tokenizer training parameters')
-    preprocess_args.add_argument('--processed_data_paths', type=str, nargs='+', help='list of input HDF5 files')
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--epochs', default=100, type=int)
     parser.add_argument('--save_ckpt_freq', default=20, type=int)
@@ -110,46 +109,101 @@ if __name__ == '__main__':
     print(f"Number of learnable parameters: {n_parameters / 1e6:.2f} M")
 
     # -------------------------------- Dataset and Dataloader ------------------------------------
-    aggregated_dataset_2 = dataset.AggregatedECGDataset(
-        file_paths=args.processed_data_paths,
-        window_size=args.signal_total_length,
-        stride_size=int(args.signal_total_length*args.overlap_ratio),
-        dataset_key='ecg_data',
-    )
+    datasets_train = [
+        ["D:/database/ECG_12l/cpsc_2018/cpsc.hdf5", "D:/database/ECG_12l/georgia/georgia.hdf5"],
+    ]
 
-    dataset_size = len(aggregated_dataset_2)
-    val_size = int(0.1 * dataset_size)
-    train_size = dataset_size - val_size
+    signal_length_train = [
+        1500,  # 12 channels are matched with 1500 length
+    ]
 
-    train_dataset, val_dataset = random_split(aggregated_dataset_2, [train_size, val_size])
+    # aggregated_dataset = utils.build_pretraining_dataset(datasets_train, signal_length_train,
+    #                                                      stride_size=int(args.signal_total_length * args.overlap_ratio),
+    #                                                      dataset_key='data')
+    #
+    # dataset_size = len(aggregated_dataset)
+    # val_size = int(0.1 * dataset_size)
+    # train_size = dataset_size - val_size
+    #
+    # train_dataset, val_dataset = random_split(aggregated_dataset, [train_size, val_size])
+    #
+    # train_sampler = None
+    # val_sampler = None
+    # shuffle_train = True
+    #
+    # train_dataloader = DataLoader(
+    #     train_dataset,
+    #     batch_size=args.batch_size,
+    #     shuffle=shuffle_train,
+    #     num_workers=0,
+    #     pin_memory=True,
+    #     sampler=train_sampler
+    # )
+    #
+    # val_dataloader = DataLoader(
+    #     val_dataset,
+    #     batch_size=args.batch_size,
+    #     shuffle=False,
+    #     num_workers=0,
+    #     pin_memory=True,
+    #     drop_last=False,
+    #     sampler=val_sampler
+    # )
+    #
+    # print(f"\nCreated DataLoader instances:")
+    # print(f"Train DataLoader: {len(train_dataloader)} batches of size {args.batch_size} (approx)")
+    # print(f"Validation DataLoader: {len(val_dataloader)} batches of size {args.batch_size} (approx)")
 
-    train_sampler = None
-    val_sampler = None
-    shuffle_train = True
+    dataset_list = []
+    for file_paths, window_size in zip(datasets_train, signal_length_train):
+        stride_size = int(window_size * args.overlap_ratio)
+        dataset_obj = dataset.AggregatedECGDataset(
+            file_paths=file_paths,
+            window_size=window_size,
+            stride_size=stride_size,
+            dataset_key='data',  # 或者 args.dataset_key
+        )
+        if len(dataset_obj) > 0:
+            dataset_list.append(dataset_obj)
 
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=shuffle_train,
-        num_workers=0,
-        pin_memory=True,
-        sampler=train_sampler
-    )
+    train_dataloader_list = []
+    val_dataloader_list = []
 
-    val_dataloader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=0,
-        pin_memory=True,
-        drop_last=False,
-        sampler=val_sampler
-    )
+    print("\n--- Preparing DataLoaders for each dataset group ---")
+    for i, dataset_obj in enumerate(dataset_list):
+        print(f"\nProcessing dataset group {i + 1} with {len(dataset_obj)} samples.")
+        dataset_size = len(dataset_obj)
+        val_size = int(0.1 * dataset_size)
+        train_size = dataset_size - val_size
 
-    print(f"\nCreated DataLoader instances:")
-    print(f"Train DataLoader: {len(train_dataloader)} batches of size {args.batch_size} (approx)")
-    print(f"Validation DataLoader: {len(val_dataloader)} batches of size {args.batch_size} (approx)")
+        if train_size <= 0 or val_size <= 0:
+            print(f"Warning: Dataset group {i + 1} is too small to split. Skipping this group.")
+            continue
 
+        train_subset, val_subset = random_split(
+            dataset_obj,
+            [train_size, val_size],
+            generator=torch.Generator().manual_seed(args.seed)
+        )
+
+        # 为这个子集创建 DataLoader
+        train_loader = DataLoader(
+            train_subset, batch_size=args.batch_size, shuffle=True,
+            num_workers=0, pin_memory=True, drop_last=True
+        )
+        val_loader = DataLoader(
+            val_subset, batch_size=args.batch_size, shuffle=False,
+            num_workers=0, pin_memory=True
+        )
+
+        train_dataloader_list.append(train_loader)
+        val_dataloader_list.append(val_loader)
+
+    if not train_dataloader_list:
+        print("ERROR: No valid DataLoaders were created. Check dataset paths and sizes.")
+        exit()
+
+    print(f"\nCreated {len(train_dataloader_list)} group(s) of DataLoaders.")
     # -------------------------------- Training Model ------------------------------------
     if utils.get_rank() == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
@@ -160,7 +214,11 @@ if __name__ == '__main__':
     optimizer = create_optimizer(args, model_without_ddp)
     loss_scaler = NativeScaler()
 
-    num_training_steps_per_epoch = len(train_dataset) // (args.batch_size * utils.get_world_size())
+    num_training_steps_per_epoch = 0
+    for data_loader in train_dataloader_list:
+        num_training_steps_per_epoch += len(data_loader)
+
+
     lr_schedule_values = utils.cosine_scheduler(
         args.lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
         warmup_epochs=args.warmup_epochs
@@ -180,7 +238,7 @@ if __name__ == '__main__':
             log_writer.set_step(epoch * num_training_steps_per_epoch)
 
         train_stats = tokenizer_engine.train_one_epoch(
-            model, train_dataloader, optimizer, device, epoch, loss_scaler,
+            model, train_dataloader_list, optimizer, device, epoch, loss_scaler,
             args.clip_grad, log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
             lr_schedule_values=lr_schedule_values, args=args
         )
@@ -193,8 +251,8 @@ if __name__ == '__main__':
             )
 
         val_stats = {}
-        if val_dataloader is not None:
-            val_stats = tokenizer_engine.evaluate(val_dataloader, model, device, log_writer, epoch, args)
+        if val_dataloader_list is not None:
+            val_stats = tokenizer_engine.evaluate(val_dataloader_list, model, device, log_writer, epoch, args)
             print(f"Validation loss of the network: {val_stats['loss']:.4f}")
             if log_writer is not None:
                 log_writer.update(**{f"val_{k}": v for k, v in val_stats.items()}, head="val_epoch",

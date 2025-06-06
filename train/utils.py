@@ -1,14 +1,3 @@
-# --------------------------------------------------------
-# Large Brain Model for Learning Generic Representations with Tremendous EEG Data in BCI
-# By Wei-Bang Jiang
-# Based on BEiT-v2, timm, DeiT, DINO, and BIOT code bases
-# https://github.com/microsoft/unilm/tree/master/beitv2
-# https://github.com/rwightman/pytorch-image-models/tree/master/timm
-# https://github.com/facebookresearch/deit/
-# https://github.com/facebookresearch/dino
-# https://github.com/ycq091044/BIOT
-# ---------------------------------------------------------
-
 import io
 import os
 import math
@@ -19,18 +8,15 @@ from collections import defaultdict, deque
 import datetime
 import numpy as np
 from timm.utils import get_state_dict
-
 from pathlib import Path
 import argparse
-
 import torch
 import torch.distributed as dist
 from torch import inf
 from tensorboardX import SummaryWriter
 import pickle
 from scipy.signal import resample
-from sklearn.metrics import r2_score
-from sklearn.metrics import mean_squared_error
+from dataset import dataset
 
 
 standard_1020 = [
@@ -638,8 +624,8 @@ def auto_load_model(args, model, model_without_ddp, optimizer, loss_scaler, mode
                 checkpoint = torch.hub.load_state_dict_from_url(
                     args.resume, map_location='cpu', check_hash=True)
             else:
-                checkpoint = torch.load(args.resume, map_location='cpu')
-            model_without_ddp.load_state_dict(checkpoint['model'])  # strict: bool=True, , strict=False
+                checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
+            model_without_ddp.load_state_dict(checkpoint['model'])
             print("Resume checkpoint %s" % args.resume)
             if 'optimizer' in checkpoint and 'epoch' in checkpoint:
                 optimizer.load_state_dict(checkpoint['optimizer'])
@@ -824,3 +810,17 @@ def get_metrics(output, target, metrics, is_binary, threshold=0.5):
             target, output, metrics=metrics
         )
     return results
+
+def build_pretraining_dataset(datasets, sig_lengths, stride_size, dataset_key):
+    aggregated_dataset_list = []
+
+    for dataset_list, sig_length in zip(datasets, sig_lengths):
+        aggregated_dataset = dataset.AggregatedECGDataset(
+            file_paths=[Path(file_path) for file_path in dataset_list],
+            window_size=sig_length,
+            stride_size=stride_size,
+            dataset_key=dataset_key)
+
+        aggregated_dataset_list.append(aggregated_dataset)
+
+    return aggregated_dataset_list

@@ -17,6 +17,7 @@ def get_args():
     return parser.parse_args()
 
 if __name__ == '__main__':
+    # Todo: 如果通道数目不一样，在这一步应该把通道数目划分整齐，同一个数据集内的通道数目应该一致
     args = get_args()
 
     print("Start processing dataset")

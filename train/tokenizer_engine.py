@@ -31,74 +31,78 @@ def train_one_epoch(model: torch.nn.Module,
         except:
             pass
 
-    for step, (batch) in enumerate(metric_logger.log_every(data_loader_list, print_freq, header)):
-        it = start_steps + step  # global training iteration
-        if lr_schedule_values is not None:
-            for i, param_group in enumerate(optimizer.param_groups):
-                if lr_schedule_values is not None:
-                    param_group["lr"] = lr_schedule_values[it] * param_group.get("lr_scale", 1.0)
-        # exp: (B, N, L)
-        signals = batch.float().to(device, non_blocking=True)
+    step_loader = 0
+    for data_loader in data_loader_list:
+        for step, (batch) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+            it = start_steps + step + step_loader
+            if lr_schedule_values is not None:
+                for i, param_group in enumerate(optimizer.param_groups):
+                    if lr_schedule_values is not None:
+                        param_group["lr"] = lr_schedule_values[it] * param_group.get("lr_scale", 1.0)
 
-        # 在 train_one_epoch 中，加载 signals 之后
-        if torch.isnan(signals).any() or torch.isinf(signals).any():
-            print("ERROR: NaN or Inf found in input signals batch!")
-            # 可以考虑保存这个 problematic batch 以供分析
-            # torch.save(signals, "problem_batch.pt")
-            sys.exit("Exiting due to bad input data.")
+            # exp: (B, N, L)
+            signals = batch.float().to(device, non_blocking=True)
 
-        with torch.cuda.amp.autocast(enabled=True):
-            loss, log_loss = model(signals)
+            # 在 train_one_epoch 中，加载 signals 之后
+            if torch.isnan(signals).any() or torch.isinf(signals).any():
+                print("ERROR: NaN or Inf found in input signals batch!")
+                # torch.save(signals, "problem_batch.pt")
+                sys.exit("Exiting due to bad input data.")
 
-        loss_value = loss.item()
+            with torch.cuda.amp.autocast(enabled=True):
+                loss, log_loss = model(signals)
 
-        # detect if loss is nan or inf...
-        if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-            sys.exit(1)
+            loss_value = loss.item()
 
-        optimizer.zero_grad()
-        # this attribute is added by timm on one optimizer (adahessian)
-        is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
-        grad_norm = loss_scaler(loss, optimizer, clip_grad=clip_grad,
-                                parameters=model.parameters(), create_graph=is_second_order)
-        loss_scale_value = loss_scaler.state_dict()["scale"]
+            # detect if loss is nan or inf...
+            if not math.isfinite(loss_value):
+                print("Loss is {}, stopping training".format(loss_value))
+                sys.exit(1)
 
-        torch.cuda.synchronize()
+            optimizer.zero_grad()
+            # this attribute is added by timm on one optimizer (adahessian)
+            is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
+            grad_norm = loss_scaler(loss, optimizer, clip_grad=clip_grad,
+                                    parameters=model.parameters(), create_graph=is_second_order)
+            loss_scale_value = loss_scaler.state_dict()["scale"]
 
-        metric_logger.update(loss=loss_value)
+            torch.cuda.synchronize()
 
-        new_log_loss = {k.split('/')[-1]: v for k, v in log_loss.items() if k not in ['total_loss']}
-        metric_logger.update(**new_log_loss)
+            metric_logger.update(loss=loss_value)
 
-        min_lr = 10.
-        max_lr = 0.
-        for group in optimizer.param_groups:
-            min_lr = min(min_lr, group["lr"])
-            max_lr = max(max_lr, group["lr"])
+            new_log_loss = {k.split('/')[-1]: v for k, v in log_loss.items() if k not in ['total_loss']}
+            metric_logger.update(**new_log_loss)
 
-        metric_logger.update(lr=max_lr)
-        metric_logger.update(min_lr=min_lr)
-        weight_decay_value = None
-        for group in optimizer.param_groups:
-            if group["weight_decay"] > 0:
-                weight_decay_value = group["weight_decay"]
-        metric_logger.update(weight_decay=weight_decay_value)
-        metric_logger.update(grad_norm=grad_norm)
+            min_lr = 10.
+            max_lr = 0.
+            for group in optimizer.param_groups:
+                min_lr = min(min_lr, group["lr"])
+                max_lr = max(max_lr, group["lr"])
 
-        if log_writer is not None:
-            log_writer.update(**new_log_loss, head="train/loss")
+            metric_logger.update(lr=max_lr)
+            metric_logger.update(min_lr=min_lr)
+            weight_decay_value = None
+            for group in optimizer.param_groups:
+                if group["weight_decay"] > 0:
+                    weight_decay_value = group["weight_decay"]
+            metric_logger.update(weight_decay=weight_decay_value)
+            metric_logger.update(grad_norm=grad_norm)
 
-            log_writer.update(lr=max_lr, head="opt")
-            log_writer.update(min_lr=min_lr, head="opt")
-            log_writer.update(weight_decay=weight_decay_value, head="opt")
-            log_writer.update(grad_norm=grad_norm, head="opt")
-            log_writer.update(loss_scale=loss_scale_value, head="opt")
+            if log_writer is not None:
+                log_writer.update(**new_log_loss, head="train/loss")
 
-            log_writer.set_step()
+                log_writer.update(lr=max_lr, head="opt")
+                log_writer.update(min_lr=min_lr, head="opt")
+                log_writer.update(weight_decay=weight_decay_value, head="opt")
+                log_writer.update(grad_norm=grad_norm, head="opt")
+                log_writer.update(loss_scale=loss_scale_value, head="opt")
 
-        if lr_scheduler is not None:
-            lr_scheduler.step_update(start_steps + step)
+                log_writer.set_step()
+
+            if lr_scheduler is not None:
+                lr_scheduler.step_update(start_steps + step)
+
+        step_loader += step
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -134,14 +138,14 @@ def evaluate(data_loader_list, model, device, log_writer=None, epoch=None, ch_na
         except:
             pass
 
-    for step, (batch) in enumerate(metric_logger.log_every(data_loader_list, 10, header)):
-        images = batch.float().to(device, non_blocking=True) / 100
-        loss, log_loss = model(images)
+    for data_loader in data_loader_list:
+        for step, (batch) in enumerate(metric_logger.log_every(data_loader, 10, header)):
+            images = batch.float().to(device, non_blocking=True) / 100
+            loss, log_loss = model(images)
+            metric_logger.update(loss=loss.item())
+            new_log_loss = {k.split('/')[-1]: v for k, v in log_loss.items() if k not in ['total_loss']}
 
-        metric_logger.update(loss=loss.item())
-
-        new_log_loss = {k.split('/')[-1]: v for k, v in log_loss.items() if k not in ['total_loss']}
-    metric_logger.update(**new_log_loss)
+        metric_logger.update(**new_log_loss)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

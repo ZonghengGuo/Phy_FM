@@ -241,19 +241,19 @@ if __name__ == '__main__':
     # --- Dummy Data ---
     # Batch size = 4, 12 channels, 1500 points
     # Batch size = 4, 6 channels, 3000 points
-    dummy_ecg_data = torch.randn(4, NUM_CHANNELS, ECG_SIZE)
+    dummy_data = torch.randn(4, NUM_CHANNELS, ECG_SIZE)
 
-    print("Input ECG data shape:", dummy_ecg_data.shape)
+    print("Input ECG data shape:", dummy_data.shape)
 
     # --- Forward Pass ---
     print("\n--- Running Forward Pass ---")
-    loss, log_data = model(dummy_ecg_data)
+    loss, log_data = model(dummy_data)
     print(f"Total Loss: {loss.item()}")
     print("Log Data:", log_data)
 
     # --- Get Codebook Indices ---
     print("\n--- Getting Codebook Indices ---")
-    indices = model.get_codebook_indices(dummy_ecg_data)
+    indices = model.get_codebook_indices(dummy_data)
     print("Codebook Indices Shape:", indices.shape)
 
     print("\n--- Model Architecture ---")
