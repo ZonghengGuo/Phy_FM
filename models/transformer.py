@@ -1,16 +1,8 @@
-import math
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from timm.models.layers import drop_path, to_2tuple, trunc_normal_
-from timm.models.registry import register_model
-from einops import rearrange
 import math
 import torch
 import torch.nn as nn
-from functools import partial
-
+import copy
 
 def _cfg(url='', **kwargs):
     return {
@@ -267,9 +259,6 @@ class NeuralTransformer(nn.Module):
         self.out_chans = self.in_chans * (sig_size//patch_size)
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
 
-        # To identify whether it is neural tokenizer or neural decoder.
-        # For the neural decoder, use linear projection (PatchEmbed) to project codebook dimension to hidden dimension.
-        # Otherwise, use TemporalConv to extract temporal features from EEG signals.
         self.patch_embed = TemporalConv(self.in_chans, self.out_chans)
         self.time_window = sig_size // patch_size
         self.patch_size = patch_size
@@ -660,3 +649,158 @@ class NormEMAVectorQuantizer(nn.Module):
         # z_q, 'b h w c -> b c h w'
         # z_q = rearrange(z_q, 'b h w c -> b c h w')
         return z_q, loss, encoding_indices
+
+class TemporalEncoder(nn.Module):
+    def __init__(self, in_chans=1, out_chans=8, embed_dim=200, segment_length=300):
+        super().__init__()
+        self.conv1 = nn.Conv1d(in_chans, out_chans, kernel_size=15, stride=8, padding=7)
+        self.norm1 = nn.GroupNorm(4, out_chans)
+        self.gelu1 = nn.GELU()
+        self.conv2 = nn.Conv1d(out_chans, out_chans, kernel_size=3, padding=1)
+
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, in_chans, segment_length)
+            dummy_output = self._forward_conv(dummy_input)
+            self.output_feature_dim = dummy_output.shape[1] * dummy_output.shape[2]
+
+        self.fc = nn.Linear(self.output_feature_dim, embed_dim)
+
+    def _forward_conv(self, x):
+        x = self.conv1(x)
+        x = self.norm1(self.gelu1(x))
+        x = self.conv2(x)
+        return x
+
+    def forward(self, x):
+        x = self._forward_conv(x)
+        x = x.flatten(1)
+        x = self.fc(x)
+        return x
+
+
+class NeuralTransformerForMaskedPhyModeling(nn.Module):
+    def __init__(self, num_channels=12, max_time_segments=10,
+                 segment_length=300, temporal_conv_out_chans=8, vocab_size=8192,
+                 embed_dim=200, depth=12, num_heads=10, mlp_ratio=4.,
+                 drop_path_rate=0.1, norm_layer=nn.LayerNorm, init_values=0.1):
+        super().__init__()
+
+        self.patch_embed = TemporalEncoder(
+            in_chans=1,
+            out_chans=temporal_conv_out_chans,
+            embed_dim=embed_dim,
+            segment_length=segment_length
+        )
+
+        # 2. 可学习的Mask Token
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        torch.nn.init.normal_(self.mask_token, std=.02)
+
+        # 3. 时空位置编码
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_channels, embed_dim))
+        self.time_embed = nn.Parameter(torch.zeros(1, max_time_segments, embed_dim))
+        torch.nn.init.normal_(self.pos_embed, std=.02)
+        torch.nn.init.normal_(self.time_embed, std=.02)
+
+        # 4. Transformer编码器
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
+        self.blocks = nn.ModuleList([
+            Block(embed_dim, num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer,
+                  drop_path=dpr[i], init_values=init_values)
+            for i in range(depth)
+        ])
+        self.norm = norm_layer(embed_dim)
+
+        # 5. 预测头 (LM Head)
+        self.lm_head = nn.Linear(embed_dim, vocab_size)
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            torch.nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def forward(self, x, bool_masked_pos):
+        # 输入x的形状: (B, N, A, T)
+        B, N, A, T = x.shape
+
+        # --- Patch Embedding ---
+        # 重塑以匹配TemporalEncoder的输入期望：(B*N*A, 1, T)
+        x = rearrange(x, 'b n a t -> (b n a) 1 t')
+        x = self.patch_embed(x)
+        # 恢复形状为序列形式: (B, N*A, D)
+        x = rearrange(x, '(b n a) d -> b (n a) d', n=N, a=A)
+
+        # --- 添加时空位置编码 ---
+        # 空间编码 (pos_embed) 扩展到时间维度A
+        pos_embed_expanded = self.pos_embed[:, :N, :].unsqueeze(2).expand(-1, -1, A, -1)
+        # 时间编码 (time_embed) 扩展到通道维度N
+        time_embed_expanded = self.time_embed[:, :A, :].unsqueeze(1).expand(-1, N, -1, -1)
+        # 合并并展平
+        pos_time_embed = (pos_embed_expanded + time_embed_expanded).flatten(1, 2)
+        x = x + pos_time_embed
+
+        # --- 应用掩码 ---
+        # bool_masked_pos 的形状是 (B, N*A)，需要扩展维度以进行广播
+        mask_token_expanded = self.mask_token.expand(B, x.shape[1], -1)
+        w = bool_masked_pos.flatten(1).unsqueeze(-1).type_as(mask_token_expanded)
+        x = x * (1 - w) + mask_token_expanded * w
+
+        # --- 通过Transformer Blocks ---
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.norm(x)
+
+        # --- 预测 ---
+        logits = self.lm_head(x)
+
+        # 返回被掩码位置的预测结果
+        return logits[bool_masked_pos]
+
+
+class NeuralTransformerForPretraining(nn.Module):
+    """
+    包装ECGLabramCoreModel，并实现学生-教师（EMA）机制。
+    单机训练版本。
+    """
+    def __init__(self, student_model: NeuralTransformerForMaskedPhyModeling, momentum=0.996):
+        super().__init__()
+        self.momentum = momentum
+        self.student = student_model
+
+        # 创建一个与学生模型结构相同但参数不参与梯度计算的教师模型
+        self.teacher = copy.deepcopy(student_model)
+        for param in self.teacher.parameters():
+            param.requires_grad = False
+        self.teacher.eval()
+
+    @torch.no_grad()
+    def _update_teacher_model(self):
+        """
+        通过EMA更新教师模型的权重。
+        """
+        for (student_param_name, student_param), (teacher_param_name, teacher_param) in zip(
+            self.student.named_parameters(), self.teacher.named_parameters()
+        ):
+            # 确保参数名匹配
+            assert student_param_name == teacher_param_name
+            teacher_param.data.mul_(self.momentum).add_(student_param.data, alpha=1 - self.momentum)
+
+    def forward(self, x, bool_masked_pos, active_teacher=True):
+        # 学生模型进行前向传播和预测
+        student_preds = self.student(x, bool_masked_pos)
+
+        teacher_preds = None
+        if active_teacher:
+            # 教师模型也进行前向传播，但不计算梯度
+            with torch.no_grad():
+                teacher_preds = self.teacher(x, bool_masked_pos)
+            # 在训练循环中，更新教师模型权重
+            self._update_teacher_model()
+
+        return student_preds, teacher_preds

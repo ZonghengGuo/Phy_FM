@@ -117,43 +117,6 @@ if __name__ == '__main__':
         1500,  # 12 channels are matched with 1500 length
     ]
 
-    # aggregated_dataset = utils.build_pretraining_dataset(datasets_train, signal_length_train,
-    #                                                      stride_size=int(args.signal_total_length * args.overlap_ratio),
-    #                                                      dataset_key='data')
-    #
-    # dataset_size = len(aggregated_dataset)
-    # val_size = int(0.1 * dataset_size)
-    # train_size = dataset_size - val_size
-    #
-    # train_dataset, val_dataset = random_split(aggregated_dataset, [train_size, val_size])
-    #
-    # train_sampler = None
-    # val_sampler = None
-    # shuffle_train = True
-    #
-    # train_dataloader = DataLoader(
-    #     train_dataset,
-    #     batch_size=args.batch_size,
-    #     shuffle=shuffle_train,
-    #     num_workers=0,
-    #     pin_memory=True,
-    #     sampler=train_sampler
-    # )
-    #
-    # val_dataloader = DataLoader(
-    #     val_dataset,
-    #     batch_size=args.batch_size,
-    #     shuffle=False,
-    #     num_workers=0,
-    #     pin_memory=True,
-    #     drop_last=False,
-    #     sampler=val_sampler
-    # )
-    #
-    # print(f"\nCreated DataLoader instances:")
-    # print(f"Train DataLoader: {len(train_dataloader)} batches of size {args.batch_size} (approx)")
-    # print(f"Validation DataLoader: {len(val_dataloader)} batches of size {args.batch_size} (approx)")
-
     dataset_list = []
     for file_paths, window_size in zip(datasets_train, signal_length_train):
         stride_size = int(window_size * args.overlap_ratio)
