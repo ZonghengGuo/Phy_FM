@@ -6,6 +6,7 @@ import wfdb
 import argparse
 from scipy.signal import butter, filtfilt, iirnotch, resample
 import h5py
+import vitaldb
 
 class H5Dataset:
     def __init__(self, path, name: str):
@@ -17,7 +18,6 @@ class H5Dataset:
 
     def _open_if_not(self):
         if self.__f is None:
-            import h5py
             self.__f = h5py.File(self.__file_path, 'a')
 
     def add_group(self, grp_name: str):
@@ -129,6 +129,13 @@ class BaseProcessor:
         y = filtfilt(b, a, data)
         return y
 
+    def filter_ppg_channel(self, data: np.ndarray, fs: int) -> np.ndarray:
+        b_notch, a_notch = iirnotch(60, 30, fs)
+        tempfilt = filtfilt(b_notch, a_notch, data)
+        N_bp, Wn_bp = butter(1, [0.5, 5], btype="band", analog=False, fs=fs)
+        tempfilt = filtfilt(N_bp, Wn_bp, tempfilt)
+        return tempfilt
+
     def resample_waveform(self, original_sfreq, signal):
         num_original_samples = len(signal)
         num_target_samples = int(num_original_samples * (self.target_sfreq / original_sfreq))
@@ -165,6 +172,32 @@ class BaseProcessor:
             interpolated.append(interpolated_channel)
         return np.array(interpolated)
 
+    def save_h5file(self, h5_group_name, processed_signal_to_save, meta_data):
+        try:
+            grp = self.h5_writer.add_group(h5_group_name)
+            dset = self.h5_writer.add_dataset(grp, 'data', processed_signal_to_save)
+
+            for key, value in meta_data.items():
+                if value is not None:
+                    try:
+                        self.h5_writer.add_attributes(dset, key, value)
+                    except Exception as e_attr:
+                        print(f"  WARNING: Can't for {h5_group_name} save key: {key} (value: {value}): {e_attr}")
+
+            print(f"Successfully process waveforms and going to save: {h5_group_name}")
+            if hasattr(self, 'overall_stats'):
+                self.overall_stats["successfully_processed_records"] += 1
+                if "duration_seconds_original" in meta_data:
+                    self.overall_stats["total_original_duration_seconds"] += meta_data[
+                        "duration_seconds_original"]
+
+        except Exception as e_h5:
+            print(f"  ERROR: in {h5_group_name} failed to save: {e_h5}")
+            if hasattr(self, 'overall_stats') and "failed_records" in self.overall_stats:
+                self.overall_stats["failed_records"].append(f"{h5_group_name} (HDF5 write error: {e_h5})")
+
+
+class PhysioNet2020Processor(BaseProcessor):
     def process_single_record(self, sig, fs, time):
         num_samples_original, num_original_channels = sig.shape
         processed_channels_data = []
@@ -223,25 +256,110 @@ class BaseProcessor:
                 # save meta_data
                 processed_signal_to_save = meta_data.pop("processed_signal")
                 h5_group_name = f"{subject_name}_{wave_name}"
-                try:
-                    grp = self.h5_writer.add_group(h5_group_name)
-                    dset = self.h5_writer.add_dataset(grp, 'data', processed_signal_to_save)
+                self.save_h5file(h5_group_name, processed_signal_to_save, meta_data)
 
-                    for key, value in meta_data.items():
-                        if value is not None:
+
+class VitaldbProcessor(BaseProcessor):
+    def process_single_record(self, sig_ecg_ii, sig_ecg_v, sig_ppg, fs, time):
+        processed_channels_data = []
+
+        # filter
+        filtered_ecg_ii_data = self._butter_bandpass_filter(sig_ecg_ii, fs)
+        filtered_ecg_ii_data = self._notch_filter(filtered_ecg_ii_data, fs)
+
+        filtered_ecg_v_data = self._butter_bandpass_filter(sig_ecg_v, fs)
+        filtered_ecg_v_data = self._notch_filter(filtered_ecg_v_data, fs)
+
+        filtered_ppg_data = self.filter_ppg_channel(sig_ppg, fs)
+
+        # Normalize
+        normalized_ecg_ii_data = self.normalize_to_minus_one_to_one(filtered_ecg_ii_data)
+        normalized_ecg_v_data = self.normalize_to_minus_one_to_one(filtered_ecg_v_data)
+        normalized_ppg_data = self.normalize_to_minus_one_to_one(filtered_ppg_data)
+
+        processed_channels_data.append(normalized_ecg_ii_data)
+        processed_channels_data.append(normalized_ecg_v_data)
+        processed_channels_data.append(normalized_ppg_data)
+
+        min_len = min(len(ch) for ch in processed_channels_data)
+        processed_signal_array = np.array([ch[:min_len] for ch in processed_channels_data])
+
+        processed_signal_array = self.interpolate_nan_multichannel(processed_signal_array)
+
+        if np.any(np.isnan(processed_signal_array)) or np.any(np.isinf(processed_signal_array)):
+            print(
+                f"Info: NaNs or Infs still present after interpolation or were Infs. Applying np.nan_to_num to zero them out.")
+            processed_signal_array = np.nan_to_num(processed_signal_array, nan=0.0, posinf=0.0, neginf=0.0)
+
+        metadata = {"original_sfreq": fs,
+                    "duration_seconds_original": time,
+                    "processed_signal": processed_signal_array,
+                    "target_sfreq": self.target_sfreq}
+
+
+        return metadata
+
+    def process_record(self):
+        dataset_path = self.raw_data_path
+        for filename in os.listdir(dataset_path):
+            file_path = os.path.join(dataset_path, filename)
+            vf = vitaldb.VitalFile(file_path)
+            ECG_ii = vf.to_numpy(['SNUADC/ECG_II'], 1 / 300)
+            ECG_v = vf.to_numpy(['SNUADC/ECG_V5'], 1 / 300)
+            ppg = vf.to_numpy(['SNUADC/PLETH'], 1 / 300)
+
+            if len(ECG_ii) == len(ECG_v) ==  len(ppg):
+                time = len(ECG_ii) // 300
+            else:
+                time = min(len(ECG_ii) // 300, len(ECG_v) // 300, len(ppg) // 300)
+
+            meta_data = self.process_single_record(ECG_ii, ECG_v, ppg, 300, time)
+
+            # save meta_data
+            processed_signal_to_save = meta_data.pop("processed_signal")
+            h5_group_name = f"{filename}"
+            self.save_h5file(h5_group_name, processed_signal_to_save, meta_data)
+
+
+class MimicProcessor(BaseProcessor):
+    def process_single_record(self, waves, fs, time):
+
+
+
+
+    def process_record(self):
+        dataset_path = self.raw_data_path
+        for subject_title_name in os.listdir(dataset_path):
+            subject_title_path = os.path.join(dataset_path, subject_title_name)
+            for subject_name in os.listdir(subject_title_path):
+                subject_path = os.path.join(subject_title_path, subject_name)
+                for filename in os.listdir(subject_path):
+                    file_path = os.path.join(subject_path, filename)
+
+                    if os.path.isdir(file_path):
+                        record_names = set(os.path.splitext(f)[0] for f in os.listdir(file_path))
+                        for wave_name in record_names:
+                            wave_path = os.path.join(file_path, wave_name)
                             try:
-                                self.h5_writer.add_attributes(dset, key, value)
-                            except Exception as e_attr:
-                                print(f"  WARNING: Can't for {h5_group_name} save key: {key} (value: {value}): {e_attr}")
+                                record = wfdb.rdrecord(wave_path)
+                            except Exception as e:
+                                print(f"读取记录 {wave_path} 时发生错误: {e}")
+                                continue
+                            fs = record.fs
+                            time = record.sig_len / fs
+                            waves = record.p_signal
+                            sig_names = record.sig_name
 
-                    print(f"Successfully process waveforms and going to save: {h5_group_name}")
-                    if hasattr(self, 'overall_stats'):
-                        self.overall_stats["successfully_processed_records"] += 1
-                        if "duration_seconds_original" in meta_data:
-                            self.overall_stats["total_original_duration_seconds"] += meta_data[
-                                "duration_seconds_original"]
+                            # preprocessing
+                            if "PLETH" in sig_names:
+                                meta_data = self.process_single_record(waves, fs, time)
+                            else:
+                                continue
 
-                except Exception as e_h5:
-                    print(f"  ERROR: in {h5_group_name} failed to save: {e_h5}")
-                    if hasattr(self, 'overall_stats') and "failed_records" in self.overall_stats:
-                        self.overall_stats["failed_records"].append(f"{h5_group_name} (HDF5 write error: {e_h5})")
+                            # save meta_data
+                            processed_signal_to_save = meta_data.pop("processed_signal")
+                            h5_group_name = f"{subject_name}_{wave_name}"
+                            self.save_h5file(h5_group_name, processed_signal_to_save, meta_data)
+
+                    else:
+                        continue

@@ -5,7 +5,11 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="7b7e7870-ca96-4339-b991-2a8d482d1bb2" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/preprocessing/0001.vital" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/preprocessing/vitaldb_processor.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/preprocessing/vitaldb_test.ipynb" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/preprocessing/processors.py" beforeDir="false" afterPath="$PROJECT_DIR$/preprocessing/processors.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -15,8 +19,8 @@
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
       <list>
-        <option value="Jupyter Notebook" />
         <option value="Python Script" />
+        <option value="Jupyter Notebook" />
       </list>
     </option>
   </component>
@@ -50,6 +54,7 @@
     &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;master&quot;,
     &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;D:/code/phy_fm/preprocessing&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
     &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
@@ -58,6 +63,11 @@
     &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
 }</component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="D:\code\phy_fm\preprocessing" />
+    </key>
+  </component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -92,7 +102,8 @@
       <workItem from="1749034364277" duration="6964000" />
       <workItem from="1749211018673" duration="8012000" />
       <workItem from="1749475902004" duration="7512000" />
-      <workItem from="1749548202128" duration="687000" />
+      <workItem from="1749548202128" duration="5694000" />
+      <workItem from="1749637667889" duration="14848000" />
     </task>
     <servers />
   </component>
